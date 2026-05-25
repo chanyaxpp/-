@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Speech To Text</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <button class="btn back-btn" onclick="goBack()">← ย้อนกลับ</button>
+    <h1>🎤 แปลงเสียงเป็นข้อความ (Local AI)</h1>
+    <div id="statusBadge" class="status-badge st-idle">
+      <span class="dot"></span>
+      <span id="statusText">กำลังเตรียมระบบ...</span>
+    </div>
+    <p class="section-label">อัดเสียงสดผ่านไมโครโฟน</p>
+    <div class="btn-row">
+      <button class="btn speech-btn" onclick="startSpeech()">🎙️ เริ่มอัดเสียง</button>
+      <button class="btn stop-btn" onclick="stopSpeech()">⏹️ หยุด</button>
+    </div>
+    <div class="divider"></div>
+    <p class="section-label">ถอดเสียงจากไฟล์ <span class="tip">(ประมวลผลแบบดิจิทัล ไม่เปิดลำโพง)</span></p>
+    <div class="file-box" onclick="document.getElementById('mediaFile').click()">
+      <p>📁 คลิกเพื่อเลือกไฟล์เสียง / วิดีโอ</p>
+      <p class="file-hint">.mp3 · .wav · .m4a</p>
+      <input type="file" id="mediaFile" accept=".mp3,.wav,.m4a,audio/*" style="display:none">
+      <div class="file-name" id="mediaName">ยังไม่ได้เลือกไฟล์</div>
+    </div>
+    <button class="btn confirm-btn" id="transcribeBtn" onclick="confirmFile()">▶️ เริ่มถอดเสียงในเครื่อง</button>
+    <div class="result" id="speechResult">กำลังตรวจสอบการเชื่อมต่อ Python Server...</div>
+    <button class="btn reset-btn" onclick="resetSpeech()">🔄 ล้างข้อมูลทั้งหมด</button>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>

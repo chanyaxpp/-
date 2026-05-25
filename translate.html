@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Translate - ระบบแปลภาษา</title>
+  
+  <link rel="stylesheet" href="style.css">
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+
+<body>
+
+  <div class="container">
+    <button class="btn back-btn" onclick="goBack()">
+      ← ย้อนกลับ
+    </button>
+
+    <h1>🌍 แปลภาษา</h1>
+
+    <p class="section-label">พิมพ์ข้อความที่ต้องการแปล</p>
+    <textarea id="inputText" placeholder="พิมพ์ข้อความตรงนี้ หรือระบบจะดึงข้อความจากไฟล์มาใส่ให้อัตโนมัติ..."></textarea>
+
+    <p class="section-label">หรือดึงข้อความจากไฟล์ <span class="tip">(.txt, .pdf, รูปภาพ, เสียง, วิดีโอ)</span></p>
+    <div class="file-box" onclick="document.getElementById('fileInput').click()">
+      <p>📁 คลิกเพื่อเลือกไฟล์จากคอมพิวเตอร์</p>
+      <p class="file-hint">รองรับเอกสาร, รูปภาพ, เสียง (.mp3, .wav) และวิดีโอ</p>
+      <input type="file" id="fileInput" accept=".txt,.pdf,.jpg,.jpeg,.png,.mp4,.mov,.mp3,.wav,.m4a,video/*,audio/*" style="display: none;">
+      <div class="file-name" id="fileName">
+        ยังไม่ได้เลือกไฟล์
+      </div>
+    </div>
+
+    <p class="section-label">เลือกภาษาปลายทาง</p>
+    <select id="language">
+      <option value="th">แปลเป็น: ภาษาไทย (Thai)</option>
+      <option value="en">แปลเป็น: English (อังกฤษ)</option>
+      <option value="zh">แปลเป็น: 中文 (จีน)</option>
+      <option value="ko">แปลเป็น: 한국어 (เกาหลี)</option>
+      <option value="ja">แปลเป็น: 日本語 (ญี่ปุ่น)</option>
+    </select>
+
+    <button class="btn" onclick="translateText()">
+      🚀 เริ่มแปลภาษา
+    </button>
+
+    <button class="btn stop-btn" onclick="resetTranslate()" style="margin-top: 10px;">
+      🔄 ล้างข้อมูล / เคลียร์หน้าเว็บ
+    </button>
+
+    <div class="result" id="translateResult" style="display: none;">
+      <strong style="color: #2196F3;">ผลลัพธ์การแปลภาษา:</strong>
+      <br><br>
+      <div id="translatedText" style="color: #222;"></div>
+    </div>
+
+  </div>
+
+  <script src="translate.js"></script>
+
+</body>
+</html>
