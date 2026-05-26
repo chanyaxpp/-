@@ -209,7 +209,7 @@ input[type="file"] {
   margin-bottom: 10px;
   font-weight: bold;
 }
-.st-idle       { background: #e0e0e0; color: #555; }
+.st-idle       { background: #bbdefb; color: #1e88e5; }
 .st-listening  { background: #ffe0b2; color: #fb8c00; }
 .st-processing { background: #bbdefb; color: #1e88e5; }
 .st-done       { background: #c8e6c9; color: #388e3c; }

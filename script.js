@@ -9,8 +9,10 @@ function setStatus(type, text) {
   const dot = badge.querySelector(".dot");
   if (dot) dot.className = (type === "listening" || type === "processing") ? "dot pulse" : "dot";
 }
+
 const PYTHON_URL = "http://127.0.0.1:5001";
-let recognition  = null;
+let recognition = null;
+let currentEventSource = null;
 
 // ==========================================
 // 1. ตรวจสอบ Python Server ตอนโหลดหน้า
@@ -22,7 +24,9 @@ window.addEventListener("DOMContentLoaded", () => {
       const file = e.target.files[0];
       if (!file) return;
       document.getElementById("mediaName").innerText = file.name;
-      document.getElementById("speechResult").innerText = "📁 เลือกไฟล์สำเร็จ — กดปุ่มด้านล่างเพื่อเริ่มถอดเสียง";
+      const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+      document.getElementById("speechResult").innerText =
+        `📁 เลือกไฟล์: ${file.name} (${sizeMB} MB)\nกดปุ่มด้านล่างเพื่อเริ่มถอดเสียง`;
       setStatus("idle", "มีไฟล์พร้อมแปลง");
     });
   }
@@ -35,7 +39,7 @@ async function checkServer() {
     const res = await fetch(PYTHON_URL + "/ping", { signal: AbortSignal.timeout(3000) });
     const d   = await res.json();
     if (d.status === "ok") {
-      box.innerText = "✅ เชื่อมต่อ Python Server สำเร็จ — พร้อมถอดเสียงแม่นยำสูงด้วย Whisper (medium)";
+      box.innerText = "✅ เชื่อมต่อ Python Server สำเร็จ — พร้อมถอดเสียงด้วย Whisper\nรองรับการแบ่งไฟล์อัตโนมัติตามช่วงเงียบ (~30 วิ/ส่วน)";
       setStatus("idle", "พร้อมใช้งาน");
       return;
     }
@@ -45,100 +49,219 @@ async function checkServer() {
 }
 
 // ==========================================
-// 2. แปลงไฟล์ทุกประเภท → WAV 16kHz mono
+// 2. ถอดเสียงจากไฟล์ — Chunk-based + SSE
 // ==========================================
-async function convertToWav16k(file) {
-  const arrayBuffer = await file.arrayBuffer();
-  const audioCtx    = new AudioContext({ sampleRate: 16000 });
-  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-  await audioCtx.close();
-
-  // รวมทุก channel → mono
-  const numCh = audioBuffer.numberOfChannels;
-  const len   = audioBuffer.length;
-  const mono  = new Float32Array(len);
-  for (let ch = 0; ch < numCh; ch++) {
-    const d = audioBuffer.getChannelData(ch);
-    for (let i = 0; i < len; i++) mono[i] += d[i];
-  }
-  for (let i = 0; i < len; i++) mono[i] /= numCh;
-
-  // Float32 → PCM Int16
-  const pcm = new Int16Array(len);
-  for (let i = 0; i < len; i++) {
-    const s = Math.max(-1, Math.min(1, mono[i]));
-    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-  }
-
-  // เขียน WAV header
-  const wav = new ArrayBuffer(44 + pcm.byteLength);
-  const v   = new DataView(wav);
-  const w   = (off, str) => [...str].forEach((c, i) => v.setUint8(off + i, c.charCodeAt(0)));
-  w(0, "RIFF"); v.setUint32(4,  36 + pcm.byteLength, true);
-  w(8, "WAVE"); w(12, "fmt ");
-  v.setUint32(16, 16,    true);
-  v.setUint16(20, 1,     true);  // PCM
-  v.setUint16(22, 1,     true);  // mono
-  v.setUint32(24, 16000, true);
-  v.setUint32(28, 32000, true);
-  v.setUint16(32, 2,     true);
-  v.setUint16(34, 16,    true);
-  w(36, "data"); v.setUint32(40, pcm.byteLength, true);
-  new Int16Array(wav, 44).set(pcm);
-
-  return new File([wav], "audio_16k.wav", { type: "audio/wav" });
-}
-
-// ==========================================
-// 3. ถอดเสียงจากไฟล์ → ส่ง Python Server
-// ==========================================
-async function confirmFile() {
-  const file = document.getElementById("mediaFile").files[0];
-  if (!file) { alert("กรุณาเลือกไฟล์ก่อนครับ"); return; }
-
+async function processFileSpeech() {
+  const fileInput = document.getElementById("mediaFile");
   const box = document.getElementById("speechResult");
 
-  // ขั้นตอน 1: แปลงเป็น WAV 16kHz
-  box.innerHTML = '<span style="color:#aaa;">⏳ กำลังเตรียมและปรับความถี่ไฟล์เสียงแบบดิจิทัล...</span>';
-  setStatus("processing", "กำลังเตรียมไฟล์...");
-  let wavFile;
-  try {
-    wavFile = await convertToWav16k(file);
-  } catch (e) {
-    box.innerHTML = '<div style="color:#e53935;">❌ แปลงไฟล์ไม่ได้: ' + e.message + '</div>';
-    setStatus("error", "แปลงไฟล์ล้มเหลว");
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    alert("กรุณาเลือกไฟล์เสียงหรือวิดีโอก่อนครับ");
     return;
   }
 
-  // ขั้นตอน 2: ส่ง Python Server
-  box.innerHTML = '<span style="color:#aaa;">⏳ ไฟล์เสียงพร้อมแล้ว! เซิร์ฟเวอร์กำลังใช้โมเดล Medium ถอดความความแม่นยำสูง...</span>';
-  setStatus("processing", "Python กำลังถอดความ...");
+  if (currentEventSource) { currentEventSource.close(); currentEventSource = null; }
+
+  const file = fileInput.files[0];
+  const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+
+  setStatus("processing", "กำลังส่งไฟล์...");
+  box.innerHTML = buildProgressHTML(3, `กำลังส่งไฟล์ (${sizeMB} MB) ไปยังเซิร์ฟเวอร์...`);
+
+  const formData = new FormData();
+  formData.append("audio", file);
+
+  // state สำหรับแสดงผลแบบ chunk
+  let chunkTexts = {};    // { chunk_index: text }
+  let allSegments = [];
+  let totalChunks = 0;
+
   try {
-    const form = new FormData();
-    form.append("audio", wavFile);
-    const res = await fetch(PYTHON_URL + "/transcribe", { method: "POST", body: form });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    const text = data.text || "";
-    if (!text) throw new Error("ได้ข้อความว่างเปล่า");
+    const response = await fetch(PYTHON_URL + "/transcribe-stream", {
+      method: "POST",
+      body: formData
+    });
 
-    box.innerHTML =
-      '<div style="font-size:13px;color:#888;margin-bottom:8px;">📁 ' + file.name + ' · Python Server (Whisper medium)</div>' +
-      '<div style="font-size:16px;color:#222;line-height:1.8;white-space:pre-wrap;border-left:3px solid #4caf50;padding-left:12px;">' + text + '</div>' +
-      '<button onclick="navigator.clipboard.writeText(this.dataset.t).then(()=>this.textContent=\'✅ คัดลอกแล้ว!\')" ' +
-      'data-t="' + text.replace(/"/g, "&quot;") + '" ' +
-      'style="margin-top:10px;padding:6px 14px;border:1px solid #ccc;border-radius:6px;cursor:pointer;font-size:13px;background:#fff;">📋 คัดลอกข้อความ</button>';
-    setStatus("done", "ถอดความสำเร็จ");
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || `Server error ${response.status}`);
+    }
 
-  } catch (e) {
-    box.innerHTML = '<div style="color:#e53935;">⚠️ ' + e.message + '<br>กรุณาตรวจสอบว่ารัน app.py อยู่ใน Terminal ครับ</div>';
-    setStatus("error", "ถอดความล้มเหลว");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    setStatus("processing", "กำลังถอดเสียง...");
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+        if (evt.type === "progress") {
+          if (evt.total_chunks) totalChunks = evt.total_chunks;
+          box.innerHTML = buildProgressHTML(evt.pct, evt.msg, totalChunks, Object.keys(chunkTexts).length);
+
+        } else if (evt.type === "segment") {
+          allSegments.push(evt.seg);
+          box.innerHTML = buildProgressHTML(evt.pct,
+            `ถอดเสียงส่วนที่ ${(evt.chunk_index||0)+1}/${totalChunks||'?'} — [${formatTime(evt.seg.end)}]`,
+            totalChunks, Object.keys(chunkTexts).length) +
+            buildLiveSegments(allSegments);
+
+        } else if (evt.type === "chunk_done") {
+          if (evt.total_chunks) totalChunks = evt.total_chunks;
+          chunkTexts[evt.chunk_index] = evt.chunk_text;
+          const doneCount = Object.keys(chunkTexts).length;
+          const pct = evt.pct || Math.round((doneCount / totalChunks) * 90 + 8);
+          box.innerHTML =
+            buildProgressHTML(pct, `เสร็จส่วนที่ ${doneCount}/${totalChunks}`, totalChunks, doneCount) +
+            buildChunkSummary(chunkTexts, totalChunks);
+
+        } else if (evt.type === "done") {
+          setStatus("done", "ถอดเสียงสำเร็จ");
+          box.innerHTML = buildFinalResult(evt.text, evt.segments, evt.total_chunks);
+
+        } else if (evt.type === "error") {
+          throw new Error(evt.msg);
+        }
+      }
+    }
+
+  } catch (error) {
+    console.error(error);
+    if (error.message && (error.message.includes("stream") || error.message.includes("ReadableStream"))) {
+      await processFileSpeechFallback(file);
+      return;
+    }
+    box.innerHTML = `<span style="color:#e53935;">❌ เกิดข้อผิดพลาด: ${error.message}<br><small>ลองตรวจสอบว่า app.py กำลังรันอยู่</small></span>`;
+    setStatus("error", "เกิดข้อผิดพลาด");
+  }
+}
+
+// Fallback ไม่มี streaming
+async function processFileSpeechFallback(file) {
+  const box = document.getElementById("speechResult");
+  box.innerHTML = buildProgressHTML(15, "กำลังประมวลผล (โหมดปกติ)... อาจใช้เวลาสักครู่");
+
+  let fakePct = 15;
+  const timer = setInterval(() => {
+    fakePct = Math.min(fakePct + 1, 85);
+    box.innerHTML = buildProgressHTML(fakePct, `กำลังถอดเสียง... (${fakePct}%)`);
+  }, 3000);
+
+  try {
+    const formData = new FormData();
+    formData.append("audio", file);
+    const response = await fetch(PYTHON_URL + "/transcribe", { method: "POST", body: formData });
+    if (!response.ok) throw new Error(`Server ${response.status}`);
+    const data = await response.json();
+    clearInterval(timer);
+    setStatus("done", "ถอดเสียงสำเร็จ");
+    box.innerHTML = buildFinalResult(data.text, data.segments, data.chunks);
+  } catch (err) {
+    clearInterval(timer);
+    box.innerHTML = `<span style="color:#e53935;">❌ ${err.message}</span>`;
+    setStatus("error", "เกิดข้อผิดพลาด");
   }
 }
 
 // ==========================================
-// 4. อัดเสียงสด (Web Speech API)
+// HTML Builders
+// ==========================================
+function buildProgressHTML(pct, msg, totalChunks, doneChunks) {
+  let chunkBar = "";
+  if (totalChunks > 1) {
+    const dots = Array.from({ length: totalChunks }, (_, i) => {
+      const isDone = i < (doneChunks || 0);
+      const isActive = i === (doneChunks || 0);
+      const color = isDone ? "#4CAF50" : isActive ? "#2196F3" : "#e0e0e0";
+      return `<span style="display:inline-block;width:${Math.max(8, Math.min(20, 180/totalChunks))}px;
+        height:8px;border-radius:4px;background:${color};margin:1px;transition:background 0.3s;"></span>`;
+    }).join("");
+    chunkBar = `<div style="margin:6px 0 2px; text-align:center;">${dots}</div>
+      <div style="font-size:11px;color:#888;margin-bottom:4px;">ส่วนที่ ${doneChunks||0}/${totalChunks} เสร็จแล้ว</div>`;
+  }
+
+  return `
+    <div style="text-align:center; padding:10px 0;">
+      <div style="font-size:14px; color:#555; margin-bottom:8px;">⏳ ${msg}</div>
+      <div style="background:#eee; border-radius:20px; height:12px; overflow:hidden; margin-bottom:4px;">
+        <div style="height:100%; width:${pct}%; background:linear-gradient(90deg,#2196F3,#00bcd4);
+             border-radius:20px; transition:width 0.4s ease;"></div>
+      </div>
+      <div style="font-size:12px; color:#999;">${pct}%</div>
+      ${chunkBar}
+      <div style="font-size:11px; color:#bbb; margin-top:4px;">ระบบแบ่งไฟล์ตามช่วงเงียบ — ถอดเสียงทีละส่วน</div>
+    </div>`;
+}
+
+function buildChunkSummary(chunkTexts, totalChunks) {
+  const keys = Object.keys(chunkTexts).sort((a,b) => a-b);
+  if (!keys.length) return "";
+  return `<div style="margin-top:8px; max-height:140px; overflow-y:auto; font-size:12px;
+    border-top:1px dashed #ddd; padding-top:8px;">` +
+    keys.map(k => `<p style="margin-bottom:5px; padding:4px 8px; background:#f0f7ff;
+      border-radius:6px;"><span style="color:#1976D2;font-weight:bold;">ส่วนที่ ${parseInt(k)+1}</span>
+      — ${chunkTexts[k] || '(ไม่มีเสียง)'}</p>`).join("") +
+    `</div>`;
+}
+
+function buildLiveSegments(segs) {
+  const last5 = segs.slice(-5);
+  return `<div style="margin-top:8px; max-height:110px; overflow-y:auto; font-size:12px; color:#555;
+    border-top:1px dashed #ddd; padding-top:6px;">` +
+    last5.map(s => `<p style="margin-bottom:3px;">
+      <span style="color:#007bff;">[${formatTime(s.start)}-${formatTime(s.end)}]</span> ${s.text}</p>`).join("") +
+    `</div>`;
+}
+
+function buildFinalResult(text, segments, totalChunks) {
+  const chunkInfo = totalChunks > 1 ? `<div style="font-size:12px;color:#888;margin-bottom:8px;">
+    ✂️ ถอดเสียงจาก ${totalChunks} ส่วน (แบ่งตามช่วงเงียบ ~30 วิ/ส่วน)</div>` : "";
+
+  let html = `<div style="font-size:14px; color:#333; line-height:1.7; text-align:left;">`;
+  html += chunkInfo;
+  html += `<b>📝 ผลลัพธ์การถอดความรวม:</b><br>
+    <p style="background:#f5f5f5; padding:10px; border-radius:8px; margin:8px 0 15px;
+    border-left:3px solid #2ecc71;">${text}</p>`;
+
+  if (segments && segments.length > 0) {
+    html += `<b>⏰ แยกตามช่วงเวลา:</b><br>
+      <div style="max-height:200px; overflow-y:auto; border:1px solid #ddd; padding:8px;
+      border-radius:8px; background:#fafafa; margin-bottom:10px;">`;
+    segments.forEach(seg => {
+      html += `<p style="margin-bottom:6px; font-size:13px;">
+        <span style="color:#007bff; font-weight:bold;">[${formatTime(seg.start)} - ${formatTime(seg.end)}]</span>
+        ${seg.text}</p>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<button onclick="navigator.clipboard.writeText(this.dataset.t).then(()=>this.textContent='✅ คัดลอกแล้ว!')"
+    data-t="${text.replace(/"/g, "&quot;")}"
+    style="padding:6px 14px; border:1px solid #ccc; border-radius:6px; cursor:pointer;
+    font-size:13px; background:#fff; margin-top:4px;">📋 คัดลอกข้อความรวม</button>`;
+  html += `</div>`;
+  return html;
+}
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+// ==========================================
+// 3. อัดเสียงสด (Web Speech API)
 // ==========================================
 function startSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -151,6 +274,7 @@ function startSpeech() {
   box.innerHTML = '<span style="color:#aaa;">🎙️ กำลังฟัง... พูดได้เลยครับ</span>';
   setStatus("listening", "กำลังฟังเสียง...");
   let finalText = "";
+
   recognition.onresult = function(e) {
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -179,12 +303,18 @@ function stopSpeech() {
 }
 
 // ==========================================
-// 5. Reset
+// 4. รีเซ็ตระบบ
 // ==========================================
 function resetSpeech() {
   if (recognition) recognition.stop();
+  if (currentEventSource) { currentEventSource.close(); currentEventSource = null; }
   document.getElementById("speechResult").innerText = "ข้อความจะแสดงตรงนี้";
   document.getElementById("mediaName").innerText = "ยังไม่ได้เลือกไฟล์";
   document.getElementById("mediaFile").value = "";
   setStatus("idle", "พร้อมใช้งาน");
+}
+
+// ฟังก์ชันทางผ่านเพื่อป้องกันปุ่มกดใน HTML ทำงานผิดพลาด
+function transcribeFile() {
+  processFileSpeech();
 }
