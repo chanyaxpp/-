@@ -24,6 +24,42 @@
 
     <div class="divider"></div>
 
+    <p class="section-label">⚙️ ตั้งค่าการถอดรหัสเสียง</p>
+    <div style="background: #f9f9f9; padding: 12px; border-radius: 12px; border: 1px solid #eaeaea; font-size: 13px;">
+      <div style="margin-bottom: 8px;">
+        <label style="font-weight: bold; color: #444;">🌐 ภาษาในไฟล์เสียง:</label>
+        <select id="sourceLang" style="width: 100%; padding: 6px; margin-top: 4px; border-radius: 6px; border: 1px solid #ccc;">
+          <option value="th">ภาษาไทย (บังคับความแม่นยำภาษาไทย)</option>
+          <option value="en">ภาษาอังกฤษ (English)</option>
+          <option value="auto">🔍 ตรวจจับภาษาอัตโนมัติ (Auto Detect)</option>
+        </select>
+      </div>
+      
+      <div style="margin-bottom: 4px;">
+        <label style="font-weight: bold; color: #444;">🎯 รูปแบบผลลัพธ์:</label><br>
+        <div style="margin-top: 4px;">
+          <input type="radio" id="mode_original" name="output_mode" value="original" checked onchange="toggleTargetLangDisplay()">
+          <label for="mode_original" style="margin-right: 15px;">ถอดความภาษาต้นฉบับ</label>
+          <br>
+          <input type="radio" id="mode_translate" name="output_mode" value="translate" onchange="toggleTargetLangDisplay()">
+          <label for="mode_translate">ถอดความเสร็จแล้วให้แปลภาษา</label>
+        </div>
+      </div>
+
+      <div id="targetLangBox" style="margin-top: 8px; display: none;">
+        <label style="font-weight: bold; color: #444;">🌍 แปลเป็นภาษาอะไร:</label>
+        <select id="targetLang" style="width: 100%; padding: 6px; margin-top: 4px; border-radius: 6px; border: 1px solid #ccc;">
+          <option value="th">ภาษาไทย (Thai)</option>
+          <option value="en">English (อังกฤษ)</option>
+          <option value="zh">中文 (จีน)</option>
+          <option value="ja">日本語 (ญี่ปุ่น)</option>
+          <option value="ko">한국어 (เกาหลี)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
     <p class="section-label">ถอดเสียงจากไฟล์ยาว / วิดีโอขนาดใหญ่</p>
     <div class="file-box" onclick="document.getElementById('mediaFile').click()">
       <p>📁 คลิกเพื่อเลือกไฟล์เสียง / วิดีโอ</p>
@@ -51,5 +87,11 @@
   </div>
 
   <script src="script.js"></script>
+  <script>
+    function toggleTargetLangDisplay() {
+      const isTranslate = document.getElementById("mode_translate").checked;
+      document.getElementById("targetLangBox").style.display = isTranslate ? "block" : "none";
+    }
+  </script>
 </body>
 </html>

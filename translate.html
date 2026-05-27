@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Translate - ระบบแปลภาษา</title>
+  <title>Translate - ระบบแปลภาษาอัจฉริยะ</title>
   
   <link rel="stylesheet" href="style.css">
 
@@ -21,12 +21,12 @@
 
     <h1>🌍 แปลภาษา</h1>
 
-    <p class="section-label">พิมพ์ข้อความที่ต้องการแปล</p>
-    <textarea id="inputText" placeholder="พิมพ์ข้อความตรงนี้ หรือระบบจะดึงข้อความจากไฟล์มาใส่ให้อัตโนมัติ..."></textarea>
+    <p class="section-label">พิมพ์ข้อความ หรือ ดึงข้อความอัตโนมัติจากเสียง</p>
+    <textarea id="inputText" placeholder="พิมพ์ข้อความตรงนี้ หรือระบบจะถอดเสียงจากไฟล์เสียงมาใส่ในกล่องนี้ให้อัตโนมัติ..."></textarea>
 
-    <p class="section-label">หรือดึงข้อความจากไฟล์ <span class="tip">(.txt, .pdf, รูปภาพ, เสียง, วิดีโอ)</span></p>
+    <p class="section-label">📂 เลือกไฟล์ <span class="tip">(.txt, .pdf, รูปภาพ, เสียง, วิดีโอ)</span></p>
     <div class="file-box" onclick="document.getElementById('fileInput').click()">
-      <p>📁 คลิกเพื่อเลือกไฟล์จากคอมพิวเตอร์</p>
+      <p>📁 คลิกเพื่อเลือกไฟล์เพื่อดึงข้อความ</p>
       <p class="file-hint">รองรับเอกสาร, รูปภาพ, เสียง (.mp3, .wav) และวิดีโอ</p>
       <input type="file" id="fileInput" accept=".txt,.pdf,.jpg,.jpeg,.png,.mp4,.mov,.mp3,.wav,.m4a,video/*,audio/*" style="display: none;">
       <div class="file-name" id="fileName">
@@ -34,7 +34,7 @@
       </div>
     </div>
 
-    <p class="section-label">เลือกภาษาปลายทาง</p>
+    <p class="section-label">🎯 เลือกภาษาปลายทางที่ต้องการแปล</p>
     <select id="language">
       <option value="th">แปลเป็น: ภาษาไทย (Thai)</option>
       <option value="en">แปลเป็น: English (อังกฤษ)</option>
@@ -47,19 +47,18 @@
       🚀 เริ่มแปลภาษา
     </button>
 
-    <button class="btn stop-btn" onclick="resetTranslate()" style="margin-top: 10px;">
-      🔄 ล้างข้อมูล / เคลียร์หน้าเว็บ
+    <button class="btn stop-btn" onclick="resetTranslate()" style="margin-top: 10px; background: #757575;">
+      🔄 รีเซ็ตหน้าจอ
     </button>
 
-    <div class="result" id="translateResult" style="display: none;">
-      <strong style="color: #2196F3;">ผลลัพธ์การแปลภาษา:</strong>
-      <br><br>
-      <div id="translatedText" style="color: #222;"></div>
-    </div>
+    <div class="divider"></div>
 
+    <p class="section-label">ผลลัพธ์การแปลภาษา</p>
+    <div class="result-box" id="resultText">
+      ผลลัพธ์จากการแปลภาษาจะแสดงตรงนี้...
+    </div>
   </div>
 
   <script src="translate.js"></script>
-
 </body>
 </html>
