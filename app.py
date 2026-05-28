@@ -1,35 +1,37 @@
 from flask import Flask, request, jsonify, Response
+from transformers import pipeline
 from flask_cors import CORS
-import whisper
 import os
 import tempfile
 import subprocess
 import json
 import re
 import torch
+import gc
+import traceback
 
 app = Flask(__name__)
 CORS(app)
 
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
 
-# ── เลือกโมเดลตาม env var WHISPER_MODEL (default: medium) ──
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "medium")
+# ── ตั้งค่า device อัตโนมัติ: CUDA ถ้ามี, ไม่งั้นใช้ CPU ──
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+TORCH_DTYPE = torch.float16 if DEVICE == "cuda" else torch.float32
 
-# ── fp16 อัตโนมัติ: เปิดถ้ามี CUDA, ปิดบน CPU ──
-USE_FP16 = torch.cuda.is_available()
+# ── โหลด Typhoon Isan ASR Whisper จาก HuggingFace ──
+TYPHOON_ISAN_MODEL = os.environ.get("TYPHOON_ISAN_MODEL", "scb10x/typhoon-isan-asr-whisper")
 
-print(f"กำลังโหลดโมเดล Whisper ({WHISPER_MODEL}) | fp16={USE_FP16} | device={'cuda' if USE_FP16 else 'cpu'}")
-model = whisper.load_model(WHISPER_MODEL)
-print("โมเดลพร้อมใช้งานแล้ว!")
+print(f"กำลังโหลดโมเดล Typhoon Isan ASR ({TYPHOON_ISAN_MODEL}) | device={DEVICE} | dtype={TORCH_DTYPE}")
+asr_pipeline = pipeline(
+    "automatic-speech-recognition",
+    model=TYPHOON_ISAN_MODEL,
+    device=DEVICE,
+    dtype=TORCH_DTYPE,
+)
+print("โมเดล Typhoon Isan พร้อมใช้งานแล้ว!")
 
 ALLOWED_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.mp4', '.mov', '.ogg', '.flac', '.webm'}
-
-# Prompt ที่เปิดกว้างขึ้น ไม่บังคับเฉพาะภาษาไทย
-GENERAL_PROMPT = (
-    "ต่อไปนี้เป็นการบันทึกเสียง กรุณาเขียนถอดความด้วยภาษาที่ถูกต้องและเป็นทางการตามภาษาต้นฉบับที่ได้ยิน "
-    "พิมพ์คำสะกดให้ถูกต้อง เว้นวรรคประโยคให้เป็นธรรมชาติ หากมีคำศัพท์เฉพาะทางให้เขียนให้ถูกต้องตามความนิยม"
-)
 
 TH_WORD_REPAIR = {
     "น้ำต่อหู": "น้ำเต้าหู้",
@@ -136,43 +138,45 @@ def google_translate(text, target_lang):
         return text
 
 def transcribe_chunk(chunk_path, offset=0.0, task="transcribe", source_lang=None):
-    """ถอดเสียง 1 chunk — รองรับภาษา auto เพื่อให้ตรวจจับภาษาเอง"""
-    import gc
+    """ถอดเสียง 1 chunk ด้วย Typhoon Isan ASR Whisper"""
     try:
-        lang_param = None if source_lang == "auto" else source_lang
+        gen_kwargs = {}
+        if task == "translate":
+            gen_kwargs["task"] = "translate"
 
-        result = model.transcribe(
-            chunk_path,
-            language=lang_param,
-            task=task,
-            initial_prompt=GENERAL_PROMPT,
-            condition_on_previous_text=False,
-            temperature=(0.0, 0.2),
-            no_speech_threshold=0.6,
-            logprob_threshold=-1.0,
-            compression_ratio_threshold=2.4,
-            fp16=USE_FP16,
-            verbose=False,
-            beam_size=5,
-            patience=1.0
-        )
-        
-        raw_text = result["text"].strip()
-        text = repair_text(raw_text) if lang_param == "th" else raw_text
-        detected_language = result.get("language", "unknown")
-        
+        if gen_kwargs:
+            result = asr_pipeline(
+                chunk_path,
+                return_timestamps=True,
+                generate_kwargs=gen_kwargs,
+            )
+        else:
+            result = asr_pipeline(
+                chunk_path,
+                return_timestamps=True,
+            )
+
+        full_text = repair_text(result["text"].strip())
+
         segments = []
-        for seg in result.get("segments", []):
-            seg_text = repair_text(seg["text"].strip()) if lang_param == "th" else seg["text"].strip()
-            segments.append({
-                "start": round(seg["start"] + offset, 2),
-                "end":   round(seg["end"] + offset, 2),
-                "text":  seg_text,
-            })
-        return text, segments, detected_language
+        if result.get("chunks"):
+            for chunk in result["chunks"]:
+                ts = chunk.get("timestamp", (0, 0))
+                seg_start = (ts[0] if ts[0] is not None else 0) + offset
+                seg_end   = (ts[1] if ts[1] is not None else seg_start + 1) + offset
+                seg_text  = repair_text(chunk["text"].strip())
+                segments.append({
+                    "start": round(seg_start, 2),
+                    "end":   round(seg_end, 2),
+                    "text":  seg_text,
+                })
+
+        detected_language = "th/isan"
+        return full_text, segments, detected_language
+
     finally:
         gc.collect()
-        if USE_FP16 and torch.cuda.is_available():
+        if DEVICE == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
 @app.route("/ping", methods=["GET"])
@@ -187,13 +191,49 @@ def translate_text():
     res = google_translate(data["text"], data["target"])
     return jsonify({"translation": res, "engine": "google"})
 
+@app.route("/transcribe", methods=["POST"])
+def transcribe_simple():
+    """Route สำหรับ fallback ใน translate.js — ถอดเสียงแบบไม่ streaming"""
+    if "audio" not in request.files:
+        return jsonify({"error": "ไม่พบไฟล์"}), 400
+
+    audio_file = request.files["audio"]
+    ext = os.path.splitext(audio_file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return jsonify({"error": f"ไม่รองรับ {ext}"}), 400
+
+    tmp_upload = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+    tmp_upload_path = tmp_upload.name
+    audio_file.save(tmp_upload_path)
+    tmp_upload.close()
+    tmp_wav_path = tmp_upload_path + "_converted.wav"
+
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", tmp_upload_path,
+            "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", tmp_wav_path
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+        text, segments, detected_lang = transcribe_chunk(tmp_wav_path, offset=0.0)
+        return jsonify({"text": text, "segments": segments, "language": detected_lang})
+
+    except Exception as e:
+        err = traceback.format_exc()
+        print(f"[ERROR /transcribe]\n{err}")
+        return jsonify({"error": str(e), "detail": err}), 500
+    finally:
+        for p in [tmp_upload_path, tmp_wav_path]:
+            if p and os.path.exists(p):
+                try: os.remove(p)
+                except: pass
+
 @app.route("/transcribe-stream", methods=["POST"])
 def transcribe_stream():
     if "audio" not in request.files:
         return jsonify({"error": "ไม่พบไฟล์"}), 400
 
     audio_file = request.files["audio"]
-    source_lang = request.form.get("source_lang", "auto") # รับค่าภาษาต้นทาง (ค่าเริ่มต้นเป็น auto เพื่อสแกนหาภาษา)
+    source_lang = request.form.get("source_lang", "auto")
     mode = request.form.get("mode", "original")
     target_lang = request.form.get("target_lang", "th")
 
@@ -230,7 +270,7 @@ def transcribe_stream():
 
             all_texts = []
             all_segments = []
-            final_detected_lang = source_lang
+            final_detected_lang = "th/isan"
 
             for i, (start, end) in enumerate(splits):
                 pct = 12 + int(((i + 0.5) / total_chunks) * 83)
@@ -238,7 +278,7 @@ def transcribe_stream():
 
                 whisper_task = "translate" if (mode == "translate" and target_lang == "en") else "transcribe"
                 text, segs, det_lang = transcribe_chunk(chunk_paths[i], offset=start, task=whisper_task, source_lang=source_lang)
-                
+
                 if i == 0:
                     final_detected_lang = det_lang
 
@@ -259,9 +299,9 @@ def transcribe_stream():
             yield f"data: {json.dumps({'type':'done','pct':100,'text':final_text,'segments':all_segments,'language':final_detected_lang,'total_chunks':total_chunks})}\n\n"
 
         except Exception as e:
-            import traceback
             err_detail = traceback.format_exc()
-            yield f"data: {json.dumps({'type':'error','msg':str(e),'detail':err_detail[:200]})}\n\n"
+            print(f"[ERROR /transcribe-stream]\n{err_detail}")
+            yield f"data: {json.dumps({'type':'error','msg':str(e),'detail':err_detail[:500]})}\n\n"
         finally:
             for p in [tmp_upload_path, tmp_wav_path] + chunk_paths:
                 if p and os.path.exists(p):

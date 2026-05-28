@@ -1,0 +1,14 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+กำลังโหลดโมเดล Typhoon Isan ASR (scb10x/typhoon-isan-asr-whisper) | device=cpu | dtype=torch.float32
+Loading weights:   0%|          | 0/947 [00:00<?, ?it/s]Loading weights:  73%|███████▎  | 693/947 [00:00<00:00, 6926.39it/s]Loading weights: 100%|██████████| 947/947 [00:00<00:00, 7321.10it/s]
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+โมเดล Typhoon Isan พร้อมใช้งานแล้ว!
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5001
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [28/May/2026 09:07:19] "[33mGET / HTTP/1.1[0m" 404 -
+127.0.0.1 - - [28/May/2026 09:07:19] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [28/May/2026 09:07:38] "POST /transcribe-stream HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 09:07:38] "[35m[1mPOST /transcribe HTTP/1.1[0m" 500 -
